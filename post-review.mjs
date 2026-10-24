@@ -55,6 +55,7 @@ export async function prepareReceipt({
   publicKeyPem = null,
 }) {
   const prepared = JSON.parse(JSON.stringify(receipt));
+  prepared.signedReceiptOriginal = JSON.parse(JSON.stringify(receipt));
   if (!prepared.git) prepared.git = {};
   if (!prepared.git.headSha && headSha) prepared.git.headSha = headSha;
   if (publicKeyPem) prepared.publicKeyPem = publicKeyPem;
