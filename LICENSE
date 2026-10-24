@@ -1,0 +1,9 @@
+Copyright © OpenSoyce. All rights reserved.
+
+This repository is private and proprietary. No license is granted to any
+part of this source tree by its presence here.
+
+The published `opensoyce` npm package (built from `packages/cli/`) is
+licensed separately under the terms in `packages/cli/LICENSE.md` — that
+document controls for anyone using the published package. This root notice
+governs the repository itself, which is not distributed.
