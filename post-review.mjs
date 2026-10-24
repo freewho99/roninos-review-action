@@ -6,7 +6,7 @@ const MARKER = '<!-- roninos-review -->';
 const DEFAULT_CHECK_NAME = 'RoninOS';
 
 import { synthesizeReviewComments } from './lib/reviewCommentSynthesizer.js';
-import { encodeReceiptMarker } from './lib/receiptChat.js';
+import { compactReceipt, encodeReceiptMarker, signCompactReceipt } from './lib/receiptChat.js';
 import { verifySuggestion } from './lib/suggestionVerifier.js';
 
 let parseTree;
@@ -53,12 +53,16 @@ export async function prepareReceipt({
   headSha,
   fileContents = {},
   publicKeyPem = null,
+  privateKeyPem = null,
 }) {
   const prepared = JSON.parse(JSON.stringify(receipt));
   prepared.signedReceiptOriginal = JSON.parse(JSON.stringify(receipt));
   if (!prepared.git) prepared.git = {};
   if (!prepared.git.headSha && headSha) prepared.git.headSha = headSha;
   if (publicKeyPem) prepared.publicKeyPem = publicKeyPem;
+  if (privateKeyPem && publicKeyPem) {
+    prepared.commentAttestation = signCompactReceipt(compactReceipt(prepared), privateKeyPem, publicKeyPem);
+  }
   for (const check of prepared.checks || []) {
     if (!check.patch || !check.file) continue;
     const content = fileContents[check.file]
@@ -86,7 +90,7 @@ export async function prepareReceipt({
 }
 
 function receiptFooter(receipt) {
-  const attestation = receipt?.attestation;
+  const attestation = receipt?.commentAttestation || receipt?.attestation;
   if (!attestation?.signature) {
     return '> Receipt is unsigned: no Ed25519 attestation was recorded.';
   }
@@ -319,6 +323,7 @@ export async function postReview({
   dryRun = false,
   fileContents = {},
   publicKeyPem = null,
+  privateKeyPem = null,
 }) {
   if (!repo || !prNumber) throw new Error('repo and prNumber are required');
   if (!receipt) throw new Error('receipt is required');
@@ -330,6 +335,7 @@ export async function postReview({
     headSha: headSha || receipt.git?.headSha || null,
     fileContents,
     publicKeyPem,
+    privateKeyPem,
   });
   const payload = buildReviewPayload(prepared, { headSha });
   if (dryRun) return { dryRun: true, payload };
@@ -419,6 +425,7 @@ function parseArgs(argv) {
     else if (arg === '--head') options.headSha = argv[++index];
     else if (arg === '--check-name') options.checkName = argv[++index];
     else if (arg === '--public-key') options.publicKeyPem = argv[++index];
+    else if (arg === '--private-key') options.privateKeyPem = argv[++index];
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--help' || arg === '-h') options.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -443,6 +450,7 @@ async function main() {
     checkName: options.checkName || DEFAULT_CHECK_NAME,
     dryRun: options.dryRun,
     publicKeyPem: options.publicKeyPem || null,
+    privateKeyPem: options.privateKeyPem || null,
   });
   console.log(JSON.stringify(result, null, 2));
 }
