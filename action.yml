@@ -1,0 +1,144 @@
+name: 'RoninOS Review'
+description: >-
+  Run the deterministic RoninOS aperture on a pull request, publish a summary,
+  line-anchored review comments, and an idempotent check run. Runs in the
+  caller's GitHub runner; no RoninOS-hosted code custody is required.
+
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  github-token:
+    description: 'Token with pull-requests: write and checks: write (normally the workflow GITHUB_TOKEN).'
+    required: true
+  roninos-version:
+    description: 'Exact published roninos package version to run.'
+    required: true
+    default: '3.0.0'
+  base-ref:
+    description: 'Base branch/ref for the diff. Defaults to the PR base branch or main.'
+    required: false
+    default: ''
+  head-sha:
+    description: 'PR head SHA for the check run/review. Defaults to github.event.pull_request.head.sha or github.sha.'
+    required: false
+    default: ''
+  check-name:
+    description: 'Check run name.'
+    required: false
+    default: 'RoninOS'
+  fail-on-violation:
+    description: 'Fail the job when the audit reports a modeled invariant violation.'
+    required: false
+    default: 'false'
+
+outputs:
+  conclusion:
+    description: 'success or failure from the deterministic audit.'
+    value: ${{ steps.audit.outputs.conclusion }}
+  receipt:
+    description: 'Path to the receipt JSON.'
+    value: ${{ steps.audit.outputs.receipt }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Require a checked-out repository
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ ! -d .git ]; then
+          echo "::error::RoninOS Review requires actions/checkout with fetch-depth: 0 before this action."
+          exit 1
+        fi
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Install RoninOS CLI and review poster
+      id: install
+      shell: bash
+      env:
+        IN_VERSION: ${{ inputs.roninos-version }}
+      run: |
+        set -euo pipefail
+        DEST="$RUNNER_TEMP/roninos-action"
+        mkdir -p "$DEST"
+        npm install --no-save --no-audit --no-fund --prefix "$DEST" "roninos@${IN_VERSION}" "web-tree-sitter@0.20.8"
+        cp "${{ github.action_path }}/post-review.mjs" "$DEST/post-review.mjs"
+        rm -rf "$DEST/lib"
+        cp -R "${{ github.action_path }}/lib" "$DEST/lib"
+        echo "dest=$DEST" >> "$GITHUB_OUTPUT"
+
+    - name: Run deterministic aperture audit
+      id: audit
+      shell: bash
+      env:
+        IN_REPO: ${{ github.repository }}
+        IN_BASE_REF: ${{ inputs.base-ref }}
+        IN_HEAD_SHA: ${{ inputs.head-sha }}
+        DEST: ${{ steps.install.outputs.dest }}
+      run: |
+        set +e
+        BASE_REF="$IN_BASE_REF"
+        if [ -z "$BASE_REF" ]; then BASE_REF="${GITHUB_BASE_REF:-main}"; fi
+        TARGET="origin/${BASE_REF}...HEAD"
+        if ! git rev-parse "$TARGET" >/dev/null 2>&1; then TARGET="HEAD~1"; fi
+        RECEIPT="$RUNNER_TEMP/roninos-receipt.json"
+        RONINOS_NO_DAEMON=1 "$DEST/node_modules/.bin/roninos" audit "$TARGET" --json > "$RECEIPT"
+        STATUS=$?
+        CONCLUSION="success"
+        if [ "$STATUS" -ne 0 ]; then CONCLUSION="failure"; fi
+        echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+        echo "conclusion=$CONCLUSION" >> "$GITHUB_OUTPUT"
+        echo "receipt=$RECEIPT" >> "$GITHUB_OUTPUT"
+        if [ -s "$RECEIPT" ]; then
+          node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); console.log('receipt '+r.receiptId+' status '+r.status);" "$RECEIPT" \
+            || true
+        fi
+        exit 0
+
+    - name: Publish summary, inline review, and check run
+      id: publish
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        DEST: ${{ steps.install.outputs.dest }}
+        RECEIPT: ${{ steps.audit.outputs.receipt }}
+        IN_REPO: ${{ github.repository }}
+        IN_PR: ${{ github.event.pull_request.number }}
+        IN_HEAD: ${{ inputs.head-sha }}
+        IN_CHECK: ${{ inputs.check-name }}
+      run: |
+        set -euo pipefail
+        if [ -z "${IN_PR:-}" ]; then
+          echo "::notice::No pull request number in this event; skipping review publication."
+          exit 0
+        fi
+        if [ -z "${IN_HEAD:-}" ]; then IN_HEAD="${GITHUB_SHA:-}"; fi
+        PUBLIC_KEY="$(cat "${HOME}/.roninos/keys/ed25519.pub.pem" 2>/dev/null || true)"
+        node "$DEST/post-review.mjs" \
+          --receipt "$RECEIPT" \
+          --repo "$IN_REPO" \
+          --pr "$IN_PR" \
+          --token "$GITHUB_TOKEN" \
+          --head "$IN_HEAD" \
+          --check-name "$IN_CHECK" \
+          --public-key "$PUBLIC_KEY"
+
+    - name: Enforce configured violation policy
+      if: ${{ inputs.fail-on-violation == 'true' && steps.audit.outputs.status != '0' }}
+      shell: bash
+      run: |
+        echo "::error::RoninOS reported a modeled invariant violation and fail-on-violation=true."
+        exit 1
+
+    - name: Upload receipt
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: roninos-review-receipt
+        path: ${{ steps.audit.outputs.receipt }}
+        if-no-files-found: warn
