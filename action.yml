@@ -24,6 +24,10 @@ inputs:
     description: 'PR head SHA for the check run/review. Defaults to github.event.pull_request.head.sha or github.sha.'
     required: false
     default: ''
+  base-sha:
+    description: 'PR base SHA for the exact diff. Defaults to the PR base or the base ref.'
+    required: false
+    default: ''
   check-name:
     description: 'Check run name.'
     required: false
@@ -78,13 +82,18 @@ runs:
       env:
         IN_REPO: ${{ github.repository }}
         IN_BASE_REF: ${{ inputs.base-ref }}
+        IN_BASE_SHA: ${{ inputs.base-sha }}
         IN_HEAD_SHA: ${{ inputs.head-sha }}
         DEST: ${{ steps.install.outputs.dest }}
       run: |
         set +e
         BASE_REF="$IN_BASE_REF"
         if [ -z "$BASE_REF" ]; then BASE_REF="${GITHUB_BASE_REF:-main}"; fi
-        TARGET="origin/${BASE_REF}...HEAD"
+        if [ -n "$IN_BASE_SHA" ] && [ -n "$IN_HEAD_SHA" ]; then
+          TARGET="${IN_BASE_SHA}...${IN_HEAD_SHA}"
+        else
+          TARGET="origin/${BASE_REF}...HEAD"
+        fi
         if ! git rev-parse "$TARGET" >/dev/null 2>&1; then TARGET="HEAD~1"; fi
         RECEIPT="$RUNNER_TEMP/roninos-receipt.json"
         RONINOS_NO_DAEMON=1 "$DEST/node_modules/.bin/roninos" audit "$TARGET" --json > "$RECEIPT"
