@@ -55,6 +55,8 @@ export async function prepareReceipt({
   publicKeyPem = null,
 }) {
   const prepared = JSON.parse(JSON.stringify(receipt));
+  if (!prepared.git) prepared.git = {};
+  if (!prepared.git.headSha && headSha) prepared.git.headSha = headSha;
   if (publicKeyPem) prepared.publicKeyPem = publicKeyPem;
   for (const check of prepared.checks || []) {
     if (!check.patch || !check.file) continue;
