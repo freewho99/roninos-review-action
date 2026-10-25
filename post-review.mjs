@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const MARKER = '<!-- roninos-review -->';
-const DEFAULT_CHECK_NAME = 'RoninOS';
+const DEFAULT_CHECK_NAME = 'RoninOS Review';
 
 import { synthesizeReviewComments } from './lib/reviewCommentSynthesizer.js';
 import { compactReceipt, encodeReceiptMarker, signCompactReceipt } from './lib/receiptChat.js';
@@ -40,7 +40,7 @@ async function fetchFileContent({ fetchImpl, token, repo, filePath, ref }) {
     `https://api.github.com/repos/${repo}/contents/${encoded}?ref=${encodeURIComponent(ref)}`,
   );
   if (!res.ok) return null;
-  const data = await res.json();
+  const data = res.data;
   if (data?.encoding !== 'base64' || !data.content) return null;
   return Buffer.from(data.content, 'base64').toString('utf8');
 }
@@ -156,9 +156,10 @@ async function findComment(fetchImpl, token, repo, prNumber) {
   return { existing: null };
 }
 
-export async function upsertSummaryComment({ fetchImpl = fetch, token, repo, prNumber, body }) {
+export async function upsertSummaryComment({ fetchImpl = fetch, token, repo, prNumber, body, createIfMissing = true }) {
   const found = await findComment(fetchImpl, token, repo, prNumber);
   if (found.error) return { posted: false, error: found.error };
+  if (!found.existing && !createIfMissing) return { posted: false, skipped: 'clean' };
   if (found.existing) {
     const result = await githubFetch(
       fetchImpl,
@@ -177,7 +178,7 @@ export async function upsertSummaryComment({ fetchImpl = fetch, token, repo, prN
   return { posted: created.ok, id: created.data?.id || null, updated: false, status: created.status };
 }
 
-async function findReview(fetchImpl, token, repo, prNumber) {
+async function findReview(fetchImpl, token, repo, prNumber, headSha) {
   for (let page = 1; page <= 3; page += 1) {
     const result = await githubFetch(
       fetchImpl,
@@ -186,7 +187,11 @@ async function findReview(fetchImpl, token, repo, prNumber) {
     );
     if (!result.ok) return { error: `list reviews ${result.status}` };
     const reviews = Array.isArray(result.data) ? result.data : [];
-    const existing = reviews.find((review) => String(review.body || '').includes(MARKER));
+    const existing = reviews.find((review) => {
+      if (!String(review.body || '').includes(MARKER)) return false;
+      if (!headSha) return true;
+      return review.commit_id === headSha;
+    });
     if (existing) return { existing };
     if (reviews.length < 100) break;
   }
@@ -210,7 +215,9 @@ export async function upsertCheckRun({
     `https://api.github.com/repos/${repo}/commits/${headSha}/check-runs?check_name=${encodeURIComponent(checkName)}&per_page=100`,
   );
   if (!listed.ok) return { posted: false, error: `list check runs ${listed.status}` };
-  const existing = (listed.data?.check_runs || []).find((run) => run.name === checkName);
+  const existing = (listed.data?.check_runs || []).find(
+    (run) => run.name === checkName && run.external_id === 'roninos-review',
+  );
   const updateBody = {
     name: checkName,
     status: 'completed',
@@ -353,14 +360,16 @@ export async function postReview({
   });
 
   const summary = failed === 0
-    ? { posted: false, skipped: 'clean' }
+    ? token
+      ? await upsertSummaryComment({ fetchImpl, token, repo, prNumber, body: payload.body, createIfMissing: false })
+      : { posted: false, skipped: 'clean' }
     : token
       ? await upsertSummaryComment({ fetchImpl, token, repo, prNumber, body: payload.body })
       : { posted: false, error: 'missing token' };
 
   let review = { posted: false, skipped: true, reason: 'no inline findings' };
   if (token && payload.comments.length > 0) {
-    const found = await findReview(fetchImpl, token, repo, prNumber);
+    const found = await findReview(fetchImpl, token, repo, prNumber, payload.commitId || headSha);
     if (found.error) {
       review = { posted: false, error: found.error };
     } else if (found.existing) {
@@ -414,6 +423,14 @@ export async function postReview({
   };
 }
 
+export function publicationFailed(result) {
+  if (!result) return true;
+  const checkFailed = result.check && result.check.posted === false;
+  const summaryFailed = result.summary && result.summary.posted === false && !result.summary.skipped;
+  const reviewFailed = result.comments > 0 && result.review && result.review.posted === false;
+  return Boolean(checkFailed || summaryFailed || reviewFailed);
+}
+
 function parseArgs(argv) {
   const options = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -453,6 +470,10 @@ async function main() {
     privateKeyPem: options.privateKeyPem || null,
   });
   console.log(JSON.stringify(result, null, 2));
+  if (publicationFailed(result)) {
+    console.error('RoninOS review publication failed; refusing to report delivery success.');
+    process.exitCode = 1;
+  }
 }
 
 if (process.argv[1] && process.argv[1].endsWith('post-review.mjs')) {

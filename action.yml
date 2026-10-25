@@ -28,10 +28,14 @@ inputs:
     description: 'PR base SHA for the exact diff. Defaults to the PR base or the base ref.'
     required: false
     default: ''
+  exclude:
+    description: 'Comma-free glob excluded from the audit. Default excludes helper scripts; set empty to include them.'
+    required: false
+    default: 'scripts/**'
   check-name:
     description: 'Check run name.'
     required: false
-    default: 'RoninOS'
+    default: 'RoninOS Review'
   fail-on-violation:
     description: 'Fail the job when the audit reports a modeled invariant violation.'
     required: false
@@ -72,8 +76,12 @@ runs:
         mkdir -p "$DEST"
         npm install --no-save --no-audit --no-fund --prefix "$DEST" "roninos@${IN_VERSION}" "web-tree-sitter@0.20.8"
         cp "${{ github.action_path }}/post-review.mjs" "$DEST/post-review.mjs"
+        cp "${{ github.action_path }}/filter-receipt.mjs" "$DEST/filter-receipt.mjs"
         rm -rf "$DEST/lib"
         cp -R "${{ github.action_path }}/lib" "$DEST/lib"
+        mkdir -p "$DEST/public"
+        rm -rf "$DEST/public/tree-sitter"
+        cp -R "$DEST/node_modules/roninos/lib/tree-sitter" "$DEST/public/tree-sitter"
         echo "dest=$DEST" >> "$GITHUB_OUTPUT"
 
     - name: Run deterministic aperture audit
@@ -84,6 +92,7 @@ runs:
         IN_BASE_REF: ${{ inputs.base-ref }}
         IN_BASE_SHA: ${{ inputs.base-sha }}
         IN_HEAD_SHA: ${{ inputs.head-sha }}
+        IN_EXCLUDE: ${{ inputs.exclude }}
         DEST: ${{ steps.install.outputs.dest }}
       run: |
         set +e
@@ -96,8 +105,13 @@ runs:
         fi
         if ! git rev-parse "$TARGET" >/dev/null 2>&1; then TARGET="HEAD~1"; fi
         RECEIPT="$RUNNER_TEMP/roninos-receipt.json"
-        RONINOS_NO_DAEMON=1 "$DEST/node_modules/.bin/roninos" audit "$TARGET" --json > "$RECEIPT"
+        EXCLUDE_ARGS=()
+        if [ -n "$IN_EXCLUDE" ]; then EXCLUDE_ARGS=(--exclude "$IN_EXCLUDE"); fi
+        RONINOS_NO_DAEMON=1 "$DEST/node_modules/.bin/roninos" audit "$TARGET" "${EXCLUDE_ARGS[@]}" --json > "$RECEIPT"
         STATUS=$?
+        if [ -n "$IN_EXCLUDE" ] && [ -s "$RECEIPT" ]; then
+          node "$DEST/filter-receipt.mjs" "$RECEIPT" "$IN_EXCLUDE" || STATUS=1
+        fi
         CONCLUSION="success"
         if [ "$STATUS" -ne 0 ]; then CONCLUSION="failure"; fi
         echo "status=$STATUS" >> "$GITHUB_OUTPUT"
@@ -129,7 +143,8 @@ runs:
         if [ -z "${IN_HEAD:-}" ]; then IN_HEAD="${GITHUB_SHA:-}"; fi
         PUBLIC_KEY="$(cat "${HOME}/.roninos/keys/ed25519.pub.pem" 2>/dev/null || true)"
         PRIVATE_KEY="$(cat "${HOME}/.roninos/keys/ed25519.pem" 2>/dev/null || true)"
-        node "$DEST/post-review.mjs" \
+        cd "$DEST"
+        node post-review.mjs \
           --receipt "$RECEIPT" \
           --repo "$IN_REPO" \
           --pr "$IN_PR" \
