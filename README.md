@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: freewho99/roninos-review-action@v1.0.0
+      - uses: freewho99/roninos-review-action@v1.0.7
         with:
           github-token: ${{ github.token }}
           roninos-version: '3.0.0'

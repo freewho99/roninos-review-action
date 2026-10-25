@@ -60,9 +60,6 @@ export async function prepareReceipt({
   if (!prepared.git) prepared.git = {};
   if (!prepared.git.headSha && headSha) prepared.git.headSha = headSha;
   if (publicKeyPem) prepared.publicKeyPem = publicKeyPem;
-  if (privateKeyPem && publicKeyPem) {
-    prepared.commentAttestation = signCompactReceipt(compactReceipt(prepared), privateKeyPem, publicKeyPem);
-  }
   for (const check of prepared.checks || []) {
     if (!check.patch || !check.file) continue;
     const content = fileContents[check.file]
@@ -85,6 +82,9 @@ export async function prepareReceipt({
       check.suggestionEndLine = proof.endLine;
       check.patchStatus = 'PROVEN_CLEAN_TREE_SITTER';
     }
+  }
+  if (privateKeyPem && publicKeyPem) {
+    prepared.commentAttestation = signCompactReceipt(compactReceipt(prepared), privateKeyPem, publicKeyPem);
   }
   return prepared;
 }
