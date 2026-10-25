@@ -15,7 +15,7 @@ inputs:
   roninos-version:
     description: 'Exact published roninos package version to run.'
     required: true
-    default: '3.1.0'
+    default: '3.1.1'
   base-ref:
     description: 'Base branch/ref for the diff. Defaults to the PR base branch or main.'
     required: false
