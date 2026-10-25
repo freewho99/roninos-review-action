@@ -90,8 +90,35 @@ runs:
         if [ -f "$DEST/lib/tricorderEngine.js" ] && [ -d "$DEST/node_modules/roninos/lib" ]; then
           cp "$DEST/lib/tricorderEngine.js" "$DEST/node_modules/roninos/lib/tricorderEngine.js"
         fi
-        if [ -f "${{ github.action_path }}/bin/roninos.mjs" ] && [ -d "$DEST/node_modules/roninos/bin" ]; then
-          cp "${{ github.action_path }}/bin/roninos.mjs" "$DEST/node_modules/roninos/bin/roninos.mjs"
+        if [ -f "$DEST/node_modules/roninos/bin/roninos.mjs" ]; then
+          python3 - "$DEST/node_modules/roninos/bin/roninos.mjs" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as handle:
+    source = handle.read()
+
+old = """  const tricorder = tricorderMod?.TricorderArchitecturalEngine
+    ? new tricorderMod.TricorderArchitecturalEngine()
+    : null;"""
+new = """  const repositoryCanonicalSources = (tricorderMod?.CANONICAL_SHARED_UTILITIES || [])
+    .map((util) => {
+      const repoRoot = path.resolve(process.cwd());
+      const fullPath = path.resolve(repoRoot, util.filePath);
+      if (!fullPath.startsWith(repoRoot + path.sep)) return null;
+      if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) return null;
+      return { filePath: util.filePath, sourceCode: fs.readFileSync(fullPath, 'utf8') };
+    })
+    .filter(Boolean);
+  const tricorder = tricorderMod?.TricorderArchitecturalEngine
+    ? new tricorderMod.TricorderArchitecturalEngine({ repositorySources: repositoryCanonicalSources })
+    : null;"""
+
+if old not in source:
+    raise SystemExit('RoninOS CLI bootstrap: expected tricorder construction not found')
+with open(path, 'w', encoding='utf-8') as handle:
+    handle.write(source.replace(old, new))
+PY
         fi
         mkdir -p "$DEST/public"
         rm -rf "$DEST/public/tree-sitter"
