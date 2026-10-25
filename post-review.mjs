@@ -48,15 +48,30 @@ export function evaluateStrictCoverage(receipt, strictCoverageGlobs = '') {
     return new RegExp(`^${escaped}$`);
   });
 
+  const coverageFiles = receipt.coverage?.files || [];
+  const unassessedCoverageFiles = coverageFiles
+    .filter((item) => item && (item.unassessed === true || item.status === 'UNASSESSED_FORMAT' || item.status === 'ANALYSIS_INCOMPLETE'))
+    .map((item) => item.path || item.file || '');
+  const assessedFiles = new Set(coverageFiles
+    .filter((item) => item && (item.status === 'COMPLETED' || item.status === 'NO_APPLICABLE_RULES'))
+    .map((item) => item.path || item.file || ''));
+  const changedFiles = receipt.git?.changedFiles || receipt.changedFiles || [];
+  const missingCoverageFiles = Array.isArray(changedFiles)
+    ? changedFiles.filter((filePath) => filePath && !assessedFiles.has(filePath))
+    : [];
   const unassessed = [
     ...(receipt.coverage?.notAssessed || []),
-    ...(receipt.unassessedFiles || [])
+    ...(receipt.unassessedFiles || []),
+    ...unassessedCoverageFiles,
+    ...missingCoverageFiles
   ];
 
+  const seen = new Set();
   const breaches = [];
   for (const item of unassessed) {
     const filePath = typeof item === 'string' ? item : (item.file || item.path || '');
-    if (filePath && regexes.some((re) => re.test(filePath))) {
+    if (filePath && !seen.has(filePath) && regexes.some((re) => re.test(filePath))) {
+      seen.add(filePath);
       breaches.push({
         id: `STRICT-COV-${breaches.length + 1}`,
         ruleId: 'STRICT_COVERAGE_BREACH',

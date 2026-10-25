@@ -90,6 +90,9 @@ runs:
         if [ -f "$DEST/lib/tricorderEngine.js" ] && [ -d "$DEST/node_modules/roninos/lib" ]; then
           cp "$DEST/lib/tricorderEngine.js" "$DEST/node_modules/roninos/lib/tricorderEngine.js"
         fi
+        if [ -f "${{ github.action_path }}/bin/roninos.mjs" ] && [ -d "$DEST/node_modules/roninos/bin" ]; then
+          cp "${{ github.action_path }}/bin/roninos.mjs" "$DEST/node_modules/roninos/bin/roninos.mjs"
+        fi
         mkdir -p "$DEST/public"
         rm -rf "$DEST/public/tree-sitter"
         cp -R "$DEST/node_modules/roninos/lib/tree-sitter" "$DEST/public/tree-sitter"
