@@ -31,6 +31,45 @@ function conclusionFor(receipt) {
   return failed.length > 0 || receipt.status === 'INVARIANT_VIOLATION' ? 'failure' : 'success';
 }
 
+export function evaluateStrictCoverage(receipt, strictCoverageGlobs = '') {
+  if (!strictCoverageGlobs) return [];
+  const patterns = String(strictCoverageGlobs)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (patterns.length === 0) return [];
+
+  const regexes = patterns.map((glob) => {
+    const escaped = glob
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*\*/g, '§§GLOBSTAR§§')
+      .replace(/\*/g, '[^/]*')
+      .replace(/§§GLOBSTAR§§/g, '.*');
+    return new RegExp(`^${escaped}$`);
+  });
+
+  const unassessed = [
+    ...(receipt.coverage?.notAssessed || []),
+    ...(receipt.unassessedFiles || [])
+  ];
+
+  const breaches = [];
+  for (const item of unassessed) {
+    const filePath = typeof item === 'string' ? item : (item.file || item.path || '');
+    if (filePath && regexes.some((re) => re.test(filePath))) {
+      breaches.push({
+        id: `STRICT-COV-${breaches.length + 1}`,
+        ruleId: 'STRICT_COVERAGE_BREACH',
+        status: 'FAILED',
+        file: filePath,
+        category: 'coverage',
+        details: `File '${filePath}' matches strict coverage glob '${strictCoverageGlobs}' but was unassessed.`
+      });
+    }
+  }
+  return breaches;
+}
+
 async function fetchFileContent({ fetchImpl, token, repo, filePath, ref }) {
   if (!token || !repo || !ref || !filePath) return null;
   const encoded = String(filePath).split('/').map(encodeURIComponent).join('/');
@@ -54,12 +93,20 @@ export async function prepareReceipt({
   fileContents = {},
   publicKeyPem = null,
   privateKeyPem = null,
+  strictCoverageGlobs = '',
 }) {
   const prepared = JSON.parse(JSON.stringify(receipt));
   prepared.signedReceiptOriginal = JSON.parse(JSON.stringify(receipt));
   if (!prepared.git) prepared.git = {};
   if (!prepared.git.headSha && headSha) prepared.git.headSha = headSha;
   if (publicKeyPem) prepared.publicKeyPem = publicKeyPem;
+
+  const coverageBreaches = evaluateStrictCoverage(prepared, strictCoverageGlobs);
+  if (coverageBreaches.length > 0) {
+    if (!prepared.checks) prepared.checks = [];
+    prepared.checks.push(...coverageBreaches);
+    prepared.status = 'INVARIANT_VIOLATION';
+  }
   for (const check of prepared.checks || []) {
     if (!check.patch || !check.file) continue;
     const content = fileContents[check.file]
@@ -331,6 +378,7 @@ export async function postReview({
   fileContents = {},
   publicKeyPem = null,
   privateKeyPem = null,
+  strictCoverageGlobs = '',
 }) {
   if (!repo || !prNumber) throw new Error('repo and prNumber are required');
   if (!receipt) throw new Error('receipt is required');
@@ -343,6 +391,7 @@ export async function postReview({
     fileContents,
     publicKeyPem,
     privateKeyPem,
+    strictCoverageGlobs,
   });
   const payload = buildReviewPayload(prepared, { headSha });
   if (dryRun) return { dryRun: true, payload };
@@ -443,6 +492,7 @@ function parseArgs(argv) {
     else if (arg === '--check-name') options.checkName = argv[++index];
     else if (arg === '--public-key') options.publicKeyPem = argv[++index];
     else if (arg === '--private-key') options.privateKeyPem = argv[++index];
+    else if (arg === '--strict-coverage-globs') options.strictCoverageGlobs = argv[++index];
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--help' || arg === '-h') options.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -454,7 +504,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     console.log(`Usage:
-  node post-review.mjs --receipt roninos-receipt.json --repo owner/repo --pr 123 --token $GITHUB_TOKEN [--head SHA] [--check-name RoninOS] [--dry-run]`);
+  node post-review.mjs --receipt roninos-receipt.json --repo owner/repo --pr 123 --token $GITHUB_TOKEN [--head SHA] [--check-name RoninOS] [--strict-coverage-globs "infra/**"] [--dry-run]`);
     return;
   }
   if (!options.receipt) throw new Error('--receipt is required');
@@ -468,6 +518,7 @@ async function main() {
     dryRun: options.dryRun,
     publicKeyPem: options.publicKeyPem || null,
     privateKeyPem: options.privateKeyPem || null,
+    strictCoverageGlobs: options.strictCoverageGlobs || process.env.INPUT_STRICT_COVERAGE_GLOBS || '',
   });
   console.log(JSON.stringify(result, null, 2));
   if (publicationFailed(result)) {
