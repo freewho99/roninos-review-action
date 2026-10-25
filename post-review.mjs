@@ -128,7 +128,7 @@ export async function prepareReceipt({
       check.suggestionStartLine = proof.startLine;
       check.suggestionEndLine = proof.endLine;
       check.patchVerified = true;
-      check.patchStatus = 'PROVEN_SEMANTICALLY_SOUND';
+      check.patchStatus = proof.status || 'PROVEN_STATIC_SEMANTIC';
     }
   }
   if (privateKeyPem && publicKeyPem) {

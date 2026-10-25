@@ -37,7 +37,7 @@ jobs:
       - uses: ./actions/roninos-review
         with:
           github-token: ${{ github.token }}
-          roninos-version: '3.1.0'
+          roninos-version: '3.0.0'
           head-sha: ${{ github.event.pull_request.head.sha || github.sha }}
 ```
 
@@ -59,10 +59,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: freewho99/roninos-review-action@v1.0.8
+      - uses: freewho99/roninos-review-action@v1.0.7
         with:
           github-token: ${{ github.token }}
-          roninos-version: '3.1.0'
+          roninos-version: '3.0.0'
           head-sha: ${{ github.event.pull_request.head.sha || github.sha }}
 ```
 
