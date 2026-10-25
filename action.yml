@@ -82,7 +82,7 @@ runs:
         set -euo pipefail
         DEST="$RUNNER_TEMP/roninos-action"
         mkdir -p "$DEST"
-        npm install --no-save --no-audit --no-fund --prefix "$DEST" "roninos@${IN_VERSION}" "web-tree-sitter@0.20.8"
+        npm install --no-save --no-audit --no-fund --prefix "$DEST" "roninos@${IN_VERSION}" "web-tree-sitter@0.20.8" "@babel/parser@^7.26.0"
         cp "${{ github.action_path }}/post-review.mjs" "$DEST/post-review.mjs"
         cp "${{ github.action_path }}/filter-receipt.mjs" "$DEST/filter-receipt.mjs"
         rm -rf "$DEST/lib"
