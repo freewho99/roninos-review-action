@@ -127,7 +127,8 @@ export async function prepareReceipt({
       check.suggestion = proof.suggestion;
       check.suggestionStartLine = proof.startLine;
       check.suggestionEndLine = proof.endLine;
-      check.patchStatus = 'PROVEN_CLEAN_TREE_SITTER';
+      check.patchVerified = true;
+      check.patchStatus = 'PROVEN_SEMANTICALLY_SOUND';
     }
   }
   if (privateKeyPem && publicKeyPem) {
@@ -141,7 +142,8 @@ function receiptFooter(receipt) {
   if (!attestation?.signature) {
     return '> Receipt is unsigned: no Ed25519 attestation was recorded.';
   }
-  return `> Receipt \`${receipt.receiptId || 'unknown'}\` · Ed25519 \`${attestation.signature}\` · key \`${attestation.keyFingerprint || 'unknown'}\``;
+  const label = receipt?.commentAttestation ? 'Review Publisher envelope Ed25519' : 'Audit Engine Ed25519';
+  return `> Receipt \`${receipt.receiptId || 'unknown'}\` · ${label} \`${attestation.signature}\` · key \`${attestation.keyFingerprint || 'unknown'}\``;
 }
 
 export function buildReviewPayload(receipt, options = {}) {

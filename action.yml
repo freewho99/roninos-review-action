@@ -87,6 +87,9 @@ runs:
         cp "${{ github.action_path }}/filter-receipt.mjs" "$DEST/filter-receipt.mjs"
         rm -rf "$DEST/lib"
         cp -R "${{ github.action_path }}/lib" "$DEST/lib"
+        if [ -f "$DEST/lib/tricorderEngine.js" ] && [ -d "$DEST/node_modules/roninos/lib" ]; then
+          cp "$DEST/lib/tricorderEngine.js" "$DEST/node_modules/roninos/lib/tricorderEngine.js"
+        fi
         mkdir -p "$DEST/public"
         rm -rf "$DEST/public/tree-sitter"
         cp -R "$DEST/node_modules/roninos/lib/tree-sitter" "$DEST/public/tree-sitter"
