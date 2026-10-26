@@ -179,7 +179,7 @@ runs:
         exit 1
 
     - name: Upload receipt
-      if: always()
+      if: always() && steps.audit.outputs.receipt != ''
       uses: actions/upload-artifact@v4
       with:
         name: roninos-review-receipt

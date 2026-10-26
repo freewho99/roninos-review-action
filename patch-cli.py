@@ -8,6 +8,9 @@ if not target.is_file():
     raise SystemExit("RoninOS CLI bootstrap: installed CLI not found")
 
 source = target.read_text(encoding="utf-8")
+if "repositoryCanonicalSources" in source:
+    sys.exit(0)
+
 old = """  const tricorder = tricorderMod?.TricorderArchitecturalEngine
     ? new tricorderMod.TricorderArchitecturalEngine()
     : null;"""
