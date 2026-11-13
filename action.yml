@@ -48,6 +48,10 @@ inputs:
     description: 'Path to compiled Tree-Sitter WASM grammar binaries.'
     required: false
     default: './wasm'
+  sentinel-observation-path:
+    description: 'Optional path under GITHUB_WORKSPACE to a canonical, already-normalized Sentinel observation JSON artifact. This action does not collect telemetry.'
+    required: false
+    default: ''
 
 outputs:
   conclusion:
@@ -150,6 +154,7 @@ runs:
         IN_HEAD: ${{ inputs.head-sha }}
         IN_CHECK: ${{ inputs.check-name }}
         IN_STRICT_COVERAGE: ${{ inputs.strict-coverage-globs }}
+        IN_SENTINEL_OBSERVATION: ${{ inputs.sentinel-observation-path }}
       run: |
         set -euo pipefail
         if [ -z "${IN_PR:-}" ]; then
@@ -159,6 +164,10 @@ runs:
         if [ -z "${IN_HEAD:-}" ]; then IN_HEAD="${GITHUB_SHA:-}"; fi
         PUBLIC_KEY="$(cat "${HOME}/.roninos/keys/ed25519.pub.pem" 2>/dev/null || true)"
         PRIVATE_KEY="$(cat "${HOME}/.roninos/keys/ed25519.pem" 2>/dev/null || true)"
+        SENTINEL_ARGS=()
+        if [ -n "${IN_SENTINEL_OBSERVATION:-}" ]; then
+          SENTINEL_ARGS+=(--sentinel-observation "$IN_SENTINEL_OBSERVATION")
+        fi
         cd "$DEST"
         node post-review.mjs \
           --receipt "$RECEIPT" \
@@ -169,7 +178,8 @@ runs:
           --check-name "$IN_CHECK" \
           --strict-coverage-globs "$IN_STRICT_COVERAGE" \
           --public-key "$PUBLIC_KEY" \
-          --private-key "$PRIVATE_KEY"
+          --private-key "$PRIVATE_KEY" \
+          "${SENTINEL_ARGS[@]}"
 
     - name: Enforce configured violation policy
       if: ${{ inputs.fail-on-violation == 'true' && steps.audit.outputs.status != '0' }}

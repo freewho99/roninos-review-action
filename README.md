@@ -37,7 +37,7 @@ jobs:
       - uses: ./actions/roninos-review
         with:
           github-token: ${{ github.token }}
-          roninos-version: '3.0.0'
+          roninos-version: '3.1.2'
           head-sha: ${{ github.event.pull_request.head.sha || github.sha }}
 ```
 
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: freewho99/roninos-review-action@v1.0.7
+      - uses: freewho99/roninos-review-action@v1.0.17
         with:
           github-token: ${{ github.token }}
           roninos-version: '3.0.0'
@@ -74,13 +74,20 @@ action executes in the caller's runner.
 | Parameter | Description | Required | Default |
 | :--- | :--- | :---: | :---: |
 | `github-token` | GitHub Actions token (`secrets.GITHUB_TOKEN`) with `pull-requests: write` and `checks: write` permissions. | **Yes** | `""` |
-| `roninos-version` | Pinned version of the `roninos` package to execute. | No | `3.0.0` |
+| `roninos-version` | Pinned version of the `roninos` package to execute. | No | `3.1.2` |
 | `fail-on-violation` | Whether to fail the workflow step when blocking `FAILED` regressions are detected. | No | `false` |
 | `strict-coverage-globs` | Comma-separated glob patterns where unmodeled files (`UNASSESSED_FORMAT`) trigger a merge block. | No | `""` |
 | `wasm-dir` | Path to compiled Tree-Sitter WASM grammar binaries. | No | `./wasm` |
 | `base-ref` | Base branch/ref for the diff. Defaults to the PR base branch or main. | No | `""` |
 | `head-sha` | PR head SHA for the check run/review. Defaults to `github.event.pull_request.head.sha` or `github.sha`. | No | `""` |
 | `check-name` | Check run name. | No | `RoninOS Review` |
+| `sentinel-observation-path` | Optional path under `GITHUB_WORKSPACE` to a canonical, already-normalized Sentinel observation artifact. The action does not collect telemetry. | No | `""` |
+
+## Optional bounded Sentinel observations
+
+`sentinel-observation-path` projects an already-normalized canonical Sentinel artifact through the existing check and PR-comment publisher. Publication requires exact repository, base, head, and diff identity. Records remain externally sourced and independently unverified; they are not defect, root-cause, severity, approval, or merge-enforcement claims.
+
+The action refuses paths outside `GITHUB_WORKSPACE`, symbolic links, non-regular files, and artifacts larger than 2 MiB. It does not collect telemetry, ingest raw payloads/SQL/queries, add persistence, remediate code, or control GitHub merge policy.
 
 ## Cryptographic Audit Receipts & Trust Discipline
 
