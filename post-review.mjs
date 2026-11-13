@@ -9,6 +9,11 @@ import { synthesizeReviewComments } from './lib/reviewCommentSynthesizer.js';
 import { compactReceipt, encodeReceiptMarker, signCompactReceipt } from './lib/receiptChat.js';
 import { verifySuggestion } from './lib/suggestionVerifier.js';
 
+const MAX_SENTINEL_ARTIFACT_BYTES = 2 * 1024 * 1024;
+const MAX_CHECK_RUN_SUMMARY = 65_535;
+
+import { projectSentinelPrPublication } from './lib/sentinelPrPublication.js';
+
 let parseTree;
 let languageKeyForFile;
 try {
@@ -24,6 +29,24 @@ function readJson(file) {
     throw new Error('RECEIPT_PATH_OUTSIDE_ALLOWED_ROOT');
   }
   return JSON.parse(fs.readFileSync(resolved, 'utf8').replace(/^\uFEFF/, ''));
+}
+
+export function readSentinelArtifact(file, workspaceRoot = process.env.GITHUB_WORKSPACE || process.cwd()) {
+  if (!file) return null;
+  const root = path.resolve(workspaceRoot);
+  const resolved = path.resolve(root, file);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error('SENTINEL_ARTIFACT_PATH_OUTSIDE_WORKSPACE');
+  }
+  const stat = fs.lstatSync(resolved);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('SENTINEL_ARTIFACT_NOT_REGULAR_FILE');
+  const realRoot = fs.realpathSync(root);
+  const realResolved = fs.realpathSync(resolved);
+  if (realResolved !== realRoot && !realResolved.startsWith(realRoot + path.sep)) {
+    throw new Error('SENTINEL_ARTIFACT_PATH_OUTSIDE_WORKSPACE');
+  }
+  if (stat.size > MAX_SENTINEL_ARTIFACT_BYTES) throw new Error('SENTINEL_ARTIFACT_TOO_LARGE');
+  return JSON.parse(fs.readFileSync(realResolved, 'utf8').replace(/^\uFEFF/, ''));
 }
 
 function conclusionFor(receipt) {
@@ -174,11 +197,18 @@ export function buildReviewPayload(receipt, options = {}) {
       side: comment.side || 'RIGHT',
       body: comment.body,
     }));
+  const sentinelMarkdown = options.sentinelPublication?.state === 'absent'
+    ? ''
+    : options.sentinelPublication?.markdown || '';
+  const summaryMarkdown = sentinelMarkdown
+    ? `${synthesized.summaryMarkdown}\n\n---\n\n${sentinelMarkdown}`
+    : synthesized.summaryMarkdown;
   return {
     commitId: receipt.git?.headSha || options.headSha || null,
-    body: `${MARKER}\n${synthesized.summaryMarkdown}\n\n${receiptFooter(receipt)}\n\n${encodeReceiptMarker(receipt)}`,
+    body: `${MARKER}\n${summaryMarkdown}\n\n${receiptFooter(receipt)}\n\n${encodeReceiptMarker(receipt)}`,
     comments,
-    synthesized,
+    synthesized: { ...synthesized, summaryMarkdown },
+    sentinelPublication: options.sentinelPublication || { state: 'absent', observation_count: 0, reasons: [] },
     conclusion: conclusionFor(receipt),
   };
 }
@@ -273,6 +303,10 @@ export async function upsertCheckRun({
   summary,
 }) {
   if (!headSha) return { posted: false, error: 'missing head SHA' };
+  const truncationFooter = '\n\n...check summary truncated at the GitHub character limit...';
+  const boundedSummary = String(summary || '').length > MAX_CHECK_RUN_SUMMARY
+    ? `${String(summary).slice(0, MAX_CHECK_RUN_SUMMARY - truncationFooter.length)}${truncationFooter}`
+    : String(summary || '');
   const listed = await githubFetch(
     fetchImpl,
     token,
@@ -287,7 +321,7 @@ export async function upsertCheckRun({
     status: 'completed',
     conclusion,
     external_id: 'roninos-review',
-    output: { title, summary },
+    output: { title, summary: boundedSummary },
   };
   const createBody = { ...updateBody, head_sha: headSha };
   const result = existing
@@ -396,6 +430,7 @@ export async function postReview({
   publicKeyPem = null,
   privateKeyPem = null,
   strictCoverageGlobs = '',
+  sentinelArtifact = null,
 }) {
   if (!repo || !prNumber) throw new Error('repo and prNumber are required');
   if (!receipt) throw new Error('receipt is required');
@@ -410,7 +445,13 @@ export async function postReview({
     privateKeyPem,
     strictCoverageGlobs,
   });
-  const payload = buildReviewPayload(prepared, { headSha });
+  const sentinelPublication = projectSentinelPrPublication(sentinelArtifact, {
+    repository: repo,
+    base_sha: prepared.git?.baseSha || prepared.git?.base_sha || null,
+    head_sha: headSha || prepared.git?.headSha || prepared.git?.head_sha || null,
+    diff_sha256: prepared.git?.diffSha256 || prepared.git?.diff_sha256 || prepared.diffSha256 || prepared.diff_sha256 || null,
+  });
+  const payload = buildReviewPayload(prepared, { headSha, sentinelPublication });
   if (dryRun) return { dryRun: true, payload };
 
   const failed = (prepared.checks || []).filter((check) => check.status === 'FAILED' || check.status === 'VIOLATION').length;
@@ -486,6 +527,11 @@ export async function postReview({
     conclusion: payload.conclusion,
     comments: payload.comments.length,
     suggestions: payload.comments.filter((comment) => comment.body.includes('```suggestion')).length,
+    sentinel: {
+      state: payload.sentinelPublication.state,
+      observation_count: payload.sentinelPublication.observation_count,
+      reasons: payload.sentinelPublication.reasons,
+    },
   };
 }
 
@@ -510,6 +556,7 @@ function parseArgs(argv) {
     else if (arg === '--public-key') options.publicKeyPem = argv[++index];
     else if (arg === '--private-key') options.privateKeyPem = argv[++index];
     else if (arg === '--strict-coverage-globs') options.strictCoverageGlobs = argv[++index];
+    else if (arg === '--sentinel-observation') options.sentinelObservation = argv[++index];
     else if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--help' || arg === '-h') options.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -521,7 +568,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     console.log(`Usage:
-  node post-review.mjs --receipt roninos-receipt.json --repo owner/repo --pr 123 --token $GITHUB_TOKEN [--head SHA] [--check-name RoninOS] [--strict-coverage-globs "infra/**"] [--dry-run]`);
+  node post-review.mjs --receipt roninos-receipt.json --repo owner/repo --pr 123 --token $GITHUB_TOKEN [--head SHA] [--check-name RoninOS] [--sentinel-observation canonical-sentinel.json] [--strict-coverage-globs "infra/**"] [--dry-run]`);
     return;
   }
   if (!options.receipt) throw new Error('--receipt is required');
@@ -536,6 +583,7 @@ async function main() {
     publicKeyPem: options.publicKeyPem || null,
     privateKeyPem: options.privateKeyPem || null,
     strictCoverageGlobs: options.strictCoverageGlobs || process.env.INPUT_STRICT_COVERAGE_GLOBS || '',
+    sentinelArtifact: options.sentinelObservation ? readSentinelArtifact(options.sentinelObservation) : null,
   });
   console.log(JSON.stringify(result, null, 2));
   if (publicationFailed(result)) {
